@@ -1,0 +1,54 @@
+name: Download DCE on demand
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref_consultation:
+        description: "Reference consultation (ex: 994600)"
+        required: true
+        type: string
+      org_acronyme:
+        description: "Org acronyme (ex: q9t)"
+        required: true
+        type: string
+      cosmos_doc_id:
+        description: "Cosmos doc id (ex: veille_marchespublics_gov_ma_994600)"
+        required: true
+        type: string
+
+jobs:
+  download-dce:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install azure-storage-blob>=12.19.0
+
+      - name: Install Playwright Chromium
+        run: |
+          playwright install --with-deps chromium
+
+      - name: Download DCE + upload Blob + update Cosmos
+        env:
+          COSMOS_KEY: ${{ secrets.COSMOS_KEY }}
+          AZURE_STORAGE_ACCOUNT: ${{ secrets.AZURE_STORAGE_ACCOUNT }}
+          AZURE_STORAGE_KEY: ${{ secrets.AZURE_STORAGE_KEY }}
+          AZURE_STORAGE_CONTAINER: ${{ secrets.AZURE_STORAGE_CONTAINER }}
+        run: |
+          python -m src.dce_to_blob \
+            --ref "${{ inputs.ref_consultation }}" \
+            --org "${{ inputs.org_acronyme }}" \
+            --doc-id "${{ inputs.cosmos_doc_id }}"
