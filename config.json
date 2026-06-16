@@ -2,8 +2,22 @@
   "_comment": "Configuration centrale Veille AO Neurones Technologies SARL. Editable sans toucher au code.",
 
   "search": {
-    "_comment": "Chaine de mots-cles passee en GET sur le portail marchespublics.gov.ma",
-    "keywords": "courant fort courant faible reseau informatique cablage informatique electricite poste transfo eclairage public videosurvaillance securite informatique firewall wifi fibre optique sdwan",
+    "_comment": "Mots-cles de recherche sur marchespublics.gov.ma. Liste editable : ajoute/retire une ligne, c'est tout. Les termes sont joints par des espaces en une seule requete GET. (Une simple chaine reste acceptee pour compat ascendante.)",
+    "keywords": [
+      "courant fort",
+      "courant faible",
+      "reseau informatique",
+      "cablage informatique",
+      "electricite",
+      "poste transfo",
+      "eclairage public",
+      "videosurvaillance",
+      "securite informatique",
+      "firewall",
+      "wifi",
+      "fibre optique",
+      "sdwan"
+    ],
     "page_size": 500
   },
 

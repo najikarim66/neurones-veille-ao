@@ -52,7 +52,9 @@ def main():
     log("MAIN", f"Config : {args.config}")
     cfg = charger_config(args.config)
 
-    keywords = cfg["search"]["keywords"]
+    # keywords accepte une liste (recommande, facile a editer) ou une chaine.
+    kw_cfg = cfg["search"]["keywords"]
+    keywords = " ".join(kw_cfg) if isinstance(kw_cfg, list) else kw_cfg
     log("MAIN", f"Mots-cles : {keywords}")
 
     # ========== PHASE 1 : SCRAPE ==========
