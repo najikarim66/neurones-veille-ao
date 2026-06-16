@@ -1,5 +1,9 @@
 """
-Module envoi email via Resend.
+Module envoi email via Microsoft 365 (Microsoft Graph, OAuth client_credentials).
+
+Reutilise l'app registration Entra deja en place pour le module RH / parc auto
+(meme tenant). Variables d'env : GRAPH_TENANT_ID, GRAPH_CLIENT_ID,
+GRAPH_CLIENT_SECRET, GRAPH_FROM (boite expeditrice), GRAPH_FROM_NAME (optionnel).
 
 Genere un HTML coloré avec :
 - Section "Nouveautés du jour" (AO scrapes pour la 1ere fois)
@@ -9,29 +13,55 @@ import os
 import json
 import urllib.request
 import urllib.error
+import urllib.parse
 from datetime import datetime
 from html import escape
 
 
-def _send_via_resend(api_key: str, payload: dict) -> dict:
+def _get_graph_token(tenant: str, client_id: str, client_secret: str) -> str:
+    """Jeton app-only via OAuth client_credentials (scope Graph .default)."""
+    data = urllib.parse.urlencode({
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "scope": "https://graph.microsoft.com/.default",
+        "grant_type": "client_credentials",
+    }).encode("utf-8")
     req = urllib.request.Request(
-        url="https://api.resend.com/emails",
-        data=json.dumps(payload).encode("utf-8"),
+        url=f"https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token",
+        data=data,
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        tok = json.loads(resp.read().decode("utf-8"))
+    access_token = tok.get("access_token")
+    if not access_token:
+        raise RuntimeError(f"token Graph: {str(tok.get('error_description') or tok)[:160]}")
+    return access_token
+
+
+def _send_via_graph(token: str, sender: str, sender_name: str,
+                    to_addresses: list, subject: str, html: str) -> None:
+    """POST /users/{sender}/sendMail. Graph renvoie 202 sans corps si OK."""
+    message = {
+        "subject": subject,
+        "body": {"contentType": "HTML", "content": html},
+        "from": {"emailAddress": {"name": sender_name, "address": sender}},
+        "toRecipients": [{"emailAddress": {"address": a}} for a in to_addresses],
+    }
+    payload = json.dumps({"message": message, "saveToSentItems": False}).encode("utf-8")
+    req = urllib.request.Request(
+        url=f"https://graph.microsoft.com/v1.0/users/{urllib.parse.quote(sender)}/sendMail",
+        data=payload,
         headers={
-            "Authorization": f"Bearer {api_key}",
+            "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/143.0.0.0 Safari/537.36"
-            ),
-            "Accept": "application/json",
         },
         method="POST",
     )
     with urllib.request.urlopen(req, timeout=30) as resp:
-        body = resp.read().decode("utf-8")
-        return json.loads(body)
+        if resp.status != 202:
+            raise RuntimeError(f"Graph sendMail status {resp.status}")
 
 
 def _color_score(score: int) -> str:
@@ -157,7 +187,7 @@ def envoyer_email(
     run_id: str = "",
 ) -> dict:
     """
-    Envoie l'email via Resend.
+    Envoie l'email via Microsoft 365 (Microsoft Graph, app-only).
 
     Retourne {'sent': bool, 'message_id': str|None, 'reason': str}.
 
@@ -168,9 +198,19 @@ def envoyer_email(
         - apres-midi + envoyer_meme_si_zero_nouveaute_apres_midi = true → envoie
         - sinon : skip
     """
-    api_key = os.environ.get("RESEND_API_KEY")
-    if not api_key:
-        return {"sent": False, "message_id": None, "reason": "RESEND_API_KEY non defini"}
+    tenant = os.environ.get("GRAPH_TENANT_ID")
+    client_id = os.environ.get("GRAPH_CLIENT_ID")
+    client_secret = os.environ.get("GRAPH_CLIENT_SECRET")
+    sender = os.environ.get("GRAPH_FROM") or config_email.get("from_address")
+    sender_name = os.environ.get("GRAPH_FROM_NAME") or config_email.get("from_name", "Veille AO Neurones")
+    missing = [k for k, v in {
+        "GRAPH_TENANT_ID": tenant,
+        "GRAPH_CLIENT_ID": client_id,
+        "GRAPH_CLIENT_SECRET": client_secret,
+        "GRAPH_FROM": sender,
+    }.items() if not v]
+    if missing:
+        return {"sent": False, "message_id": None, "reason": f"Config Graph manquante : {', '.join(missing)}"}
 
     # Logique d'envoi
     is_morning = datetime.now().hour < 12
@@ -193,16 +233,10 @@ def envoyer_email(
 
     html = construire_email_html(nouveautes, rappels, run_id=run_id)
 
-    payload = {
-        "from": config_email["from_address"],
-        "to": config_email["to_addresses"],
-        "subject": subj,
-        "html": html,
-    }
-
     try:
-        resp = _send_via_resend(api_key, payload)
-        return {"sent": True, "message_id": resp.get("id"), "reason": "OK"}
+        token = _get_graph_token(tenant, client_id, client_secret)
+        _send_via_graph(token, sender, sender_name, config_email["to_addresses"], subj, html)
+        return {"sent": True, "message_id": "Graph/202", "reason": "OK"}
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", errors="replace")
         return {"sent": False, "message_id": None, "reason": f"HTTP {e.code}: {body[:300]}"}

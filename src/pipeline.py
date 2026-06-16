@@ -130,7 +130,7 @@ def main():
     if args.no_email:
         log("PHASE", ">>> Phase 4/4 : Email SKIP (no-email)")
     else:
-        log("PHASE", ">>> Phase 4/4 : Envoi email Resend")
+        log("PHASE", ">>> Phase 4/4 : Envoi email Microsoft 365 (Graph)")
         run_id = datetime.now().strftime("%Y%m%d_%H%M")
         result = envoyer_email(
             config_email=cfg["email"],

@@ -188,9 +188,10 @@
   },
 
   "email": {
-    "_comment": "Resend API. Variable d'env RESEND_API_KEY doit etre definie.",
-    "provider": "resend",
-    "from_address": "Veille AO Neurones <onboarding@resend.dev>",
+    "_comment": "Microsoft 365 via Graph (app-only). Env requis : GRAPH_TENANT_ID, GRAPH_CLIENT_ID, GRAPH_CLIENT_SECRET, GRAPH_FROM. Reutilise l'app Entra du module RH.",
+    "provider": "graph",
+    "from_address": "no-reply@neurones.ma",
+    "from_name": "Veille AO Neurones",
     "to_addresses": ["naji@neurones.ma"],
     "subject_prefix": "[Veille AO]",
     "envoyer_meme_si_zero_nouveaute_matin": true,

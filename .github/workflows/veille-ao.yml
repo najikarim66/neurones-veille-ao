@@ -40,6 +40,10 @@ jobs:
         shell: powershell
         env:
           COSMOS_KEY: ${{ secrets.COSMOS_KEY }}
-          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          GRAPH_TENANT_ID: ${{ secrets.GRAPH_TENANT_ID }}
+          GRAPH_CLIENT_ID: ${{ secrets.GRAPH_CLIENT_ID }}
+          GRAPH_CLIENT_SECRET: ${{ secrets.GRAPH_CLIENT_SECRET }}
+          GRAPH_FROM: no-reply@neurones.ma
+          GRAPH_FROM_NAME: Veille AO Neurones
         run: |
           & "C:\actions-runner\veille-venv\Scripts\python.exe" -m src.pipeline
