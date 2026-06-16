@@ -17,7 +17,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       # Runner self-hosted Windows : on n'utilise PAS actions/setup-python
       # (son auto-install d'un .exe echoue hors runner GitHub-hosted).
