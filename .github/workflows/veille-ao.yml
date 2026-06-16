@@ -12,7 +12,7 @@ on:
 
 jobs:
   veille:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, maroc]
     timeout-minutes: 10
 
     steps:
@@ -32,7 +32,7 @@ jobs:
 
       - name: Install Playwright Chromium
         run: |
-          playwright install --with-deps chromium
+          playwright install chromium
 
       - name: Run pipeline
         env:
