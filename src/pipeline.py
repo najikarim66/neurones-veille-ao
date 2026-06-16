@@ -52,10 +52,26 @@ def main():
     log("MAIN", f"Config : {args.config}")
     cfg = charger_config(args.config)
 
-    # keywords accepte une liste (recommande, facile a editer) ou une chaine.
+    # Mots-cles : prioritairement depuis Cosmos (doc 'veille_config', editable via
+    # la page Veille AO), sinon depuis config.json (liste ou chaine de secours).
     kw_cfg = cfg["search"]["keywords"]
     keywords = " ".join(kw_cfg) if isinstance(kw_cfg, list) else kw_cfg
-    log("MAIN", f"Mots-cles : {keywords}")
+    kw_source = "config.json"
+    if not args.no_cosmos:
+        try:
+            _kw_client = CosmosVeilleClient(
+                endpoint=cfg["cosmos"]["endpoint"],
+                database=cfg["cosmos"]["database"],
+                container=cfg["cosmos"]["container"],
+                source_id=cfg["cosmos"]["source_id"],
+            )
+            kw_remote = _kw_client.get_keywords()
+            if kw_remote:
+                keywords = " ".join(kw_remote)
+                kw_source = f"Cosmos ({len(kw_remote)} mots-cles)"
+        except Exception as e:
+            log("MAIN", f"Lecture mots-cles Cosmos echouee, fallback config.json : {e}")
+    log("MAIN", f"Mots-cles [{kw_source}] : {keywords}")
 
     # ========== PHASE 1 : SCRAPE ==========
     log("PHASE", ">>> Phase 1/4 : Scrape")

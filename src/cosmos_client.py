@@ -91,6 +91,23 @@ class CosmosVeilleClient:
     def _doc_id(self, ref_consultation: str) -> str:
         return f"veille_{self.source_id}_{ref_consultation}"
 
+    def get_keywords(self):
+        """
+        Lit les mots-cles de recherche depuis le doc config 'veille_config'
+        (editable via la page Veille AO). Retourne une liste nettoyee, ou None
+        si absent/vide (le pipeline retombe alors sur config.json).
+        """
+        try:
+            doc = self.container.read_item(item="veille_config", partition_key=self.source_id)
+        except Exception:
+            return None
+        kw = doc.get("keywords")
+        if isinstance(kw, list):
+            kw = [str(k).strip() for k in kw if str(k).strip()]
+            if kw:
+                return kw
+        return None
+
     def upsert_ao(self, ao: dict) -> dict:
         """
         Upsert un AO avec dedup intelligente.
