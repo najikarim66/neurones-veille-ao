@@ -29,8 +29,7 @@ from src.dce_download import telecharger_dce
 from src.send_email import envoyer_graph_simple
 
 # Destinataire de l'email secretaire (liste, editable ici)
-# TEST TEMPORAIRE : naji@ (remettre imane@neurones.ma apres validation)
-DESTINATAIRE_DCE = ["naji@neurones.ma"]
+DESTINATAIRE_DCE = ["imane@neurones.ma"]
 
 
 def _fmt_mad(n):
