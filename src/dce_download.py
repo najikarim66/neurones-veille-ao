@@ -11,12 +11,29 @@ Exemple :
   python -m src.dce_download 994600 q9t
 """
 import sys
+import re
 import zipfile
 import json
 from pathlib import Path
 from datetime import datetime
 
 from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
+
+
+def _parse_montant_fr(s):
+    """Montant FR -> float. '5 000,00 MAD' -> 5000.0 ; '284 549,50' -> 284549.5.
+    Vide / '-' / None / non numerique -> None (jamais d'exception)."""
+    if s is None:
+        return None
+    txt = re.sub(r"[^0-9.,]", "", str(s))
+    if not txt:
+        return None
+    if "," in txt:
+        txt = txt.replace(".", "").replace(",", ".")
+    try:
+        return float(txt)
+    except ValueError:
+        return None
 
 BASE_URL = "https://www.marchespublics.gov.ma"
 
@@ -141,7 +158,51 @@ def telecharger_dce(ref: str, org: str, config: dict) -> Path:
                 nb = len(zf.namelist())
                 log("STEP5", f"ZIP valide, {nb} fichier(s)")
 
-            return local_path
+            # ----- STEP6 : scrape estimation/caution (page detail) - BEST-EFFORT -----
+            # Le ZIP est deja valide : une erreur ici ne doit JAMAIS faire echouer le DCE.
+            estimation_mo = None
+            caution_provisoire = None
+            estimation_raw = None
+            caution_raw = None
+            try:
+                detail_url = (
+                    f"{BASE_URL}/index.php?page=entreprise.EntrepriseDetailsConsultation"
+                    f"&refConsultation={ref}&orgAcronyme={org}"
+                )
+                log("STEP6", "Scrape estimation/caution (page detail)")
+                page.goto(detail_url, wait_until="domcontentloaded")
+                # Caution provisoire : id stable se terminant par _cautionProvisoire
+                try:
+                    cau = page.locator('[id$="_cautionProvisoire"]').first
+                    cau.wait_for(state="attached", timeout=10000)
+                    caution_raw = (cau.inner_text() or "").strip()
+                except Exception as e:
+                    log("STEP6", f"  caution introuvable : {e}")
+                # Estimation : matcher par LIBELLE (titre contient 'Estimation'), pas par index
+                try:
+                    titres = page.locator('[id$="_titre"]')
+                    for i in range(titres.count()):
+                        if "Estimation" in (titres.nth(i).inner_text() or ""):
+                            tid = titres.nth(i).get_attribute("id") or ""
+                            base = tid[: -len("titre")]
+                            val = page.locator("#" + base + "labelReferentielZoneText").first
+                            estimation_raw = (val.inner_text() or "").strip()
+                            break
+                except Exception as e:
+                    log("STEP6", f"  estimation introuvable : {e}")
+                estimation_mo = _parse_montant_fr(estimation_raw)
+                caution_provisoire = _parse_montant_fr(caution_raw)
+                log("STEP6", f"  estimation={estimation_mo} caution={caution_provisoire}")
+            except Exception as e:
+                log("STEP6", f"  WARN scrape echoue (best-effort) : {e}")
+
+            return {
+                "zip_path": local_path,
+                "estimation_mo": estimation_mo,
+                "caution_provisoire": caution_provisoire,
+                "estimation_raw": estimation_raw,
+                "caution_raw": caution_raw,
+            }
 
         except Exception:
             try:
@@ -169,8 +230,8 @@ def main():
 
     log("MAIN", f"DCE download ref={ref} org={org}")
     try:
-        path = telecharger_dce(ref, org, config)
-        log("MAIN", f"SUCCESS -> {path}")
+        result = telecharger_dce(ref, org, config)
+        log("MAIN", f"SUCCESS -> {result['zip_path']} | estimation={result['estimation_mo']} caution={result['caution_provisoire']}")
         sys.exit(0)
     except Exception as e:
         log("MAIN", f"FAILURE -> {type(e).__name__}: {e}")

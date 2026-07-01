@@ -26,6 +26,54 @@ from azure.storage.blob import BlobServiceClient, BlobSasPermissions, generate_b
 from azure.cosmos import CosmosClient, exceptions as cosmos_exc
 
 from src.dce_download import telecharger_dce
+from src.send_email import envoyer_graph_simple
+
+# Destinataire de l'email secretaire (liste, editable ici)
+DESTINATAIRE_DCE = ["imane@neurones.ma"]
+
+
+def _fmt_mad(n):
+    """Montant -> 'xxx xxx,xx MAD' (format FR) ; None -> 'non precise'."""
+    if n is None:
+        return "non precise"
+    try:
+        s = "{:,.2f}".format(float(n))
+    except (ValueError, TypeError):
+        return "non precise"
+    return s.replace(",", " ").replace(".", ",") + " MAD"
+
+
+def _build_email_html(doc, sas_url):
+    """Corps HTML de l'email secretaire (recap + bouton telechargement SAS)."""
+    from html import escape
+
+    def row(k, v):
+        return ('<tr><td style="padding:6px 10px;border:1px solid #ddd;background:#f5f5f5;'
+                'font-weight:bold">' + k + '</td>'
+                '<td style="padding:6px 10px;border:1px solid #ddd">' + v + '</td></tr>')
+
+    ref = escape(str(doc.get("reference_ao") or doc.get("ref_consultation") or "-"))
+    objet = escape(str(doc.get("objet") or "-"))
+    moa = escape(str(doc.get("acheteur") or "-"))
+    dl = escape(str(doc.get("date_limite") or "-"))
+    est = _fmt_mad(doc.get("estimation_mo"))
+    cau = _fmt_mad(doc.get("caution_provisoire"))
+    href = escape(sas_url or "#")
+    return (
+        '<div style="font-family:Arial,Helvetica,sans-serif;max-width:640px;color:#222">'
+        '<h2 style="color:#1F4E78">Nouvel appel d\'offres a preparer</h2>'
+        '<table style="border-collapse:collapse;width:100%;font-size:14px">'
+        + row("Reference", ref) + row("Objet", objet) + row("Maitre d'ouvrage", moa)
+        + row("Estimation (MO)", est) + row("Caution provisoire", cau) + row("Date limite", dl)
+        + '</table>'
+        '<p style="margin:20px 0">'
+        '<a href="' + href + '" style="background:#107C41;color:#fff;padding:10px 18px;'
+        'text-decoration:none;border-radius:4px;font-weight:bold">Telecharger le dossier (DCE)</a>'
+        '</p>'
+        '<p style="color:#777;font-size:12px">Lien de telechargement valable 35 jours. '
+        'Email automatique - Veille AO Neurones.</p>'
+        '</div>'
+    )
 
 
 def log(step, msg):
@@ -133,8 +181,10 @@ def main():
             local_config["playwright"]["headless"] = True
 
             log("STEP1", "Lancement DL DCE Playwright")
-            zip_path = telecharger_dce(args.ref, args.org, local_config)
+            dce = telecharger_dce(args.ref, args.org, local_config)
+            zip_path = dce["zip_path"]
             log("STEP1", f"DCE telecharge : {zip_path} ({zip_path.stat().st_size:,} bytes)")
+            log("STEP1", f"  estimation={dce['estimation_mo']} caution={dce['caution_provisoire']}")
 
             # ----- 2. Upload Blob -----
             account = os.environ["AZURE_STORAGE_ACCOUNT"]
@@ -146,8 +196,8 @@ def main():
                 account, account_key, container_name
             )
 
-        # ----- 3. Update Cosmos avec succes -----
-        update_cosmos_doc(
+        # ----- 3. Update Cosmos avec succes (+ enrichissement estimation/caution) -----
+        doc = update_cosmos_doc(
             cosmos_cfg["endpoint"], cosmos_cfg["database"], cosmos_cfg["container"],
             args.doc_id, source_id,
             {
@@ -157,9 +207,34 @@ def main():
                 "dce_size_bytes": size,
                 "dce_uploaded_at": utcnow_iso(),
                 "dce_error": None,
+                "estimation_mo": dce["estimation_mo"],
+                "caution_provisoire": dce["caution_provisoire"],
             }
         )
         log("STEP3", "Cosmos mis a jour : ready")
+
+        # ----- 4. Email secretaire (BEST-EFFORT ; une seule fois ; jamais si failed) -----
+        try:
+            if doc is not None and not doc.get("dce_email_sent"):
+                ref_aff = doc.get("reference_ao") or doc.get("ref_consultation") or args.ref
+                moa = doc.get("acheteur") or "-"
+                subject = f"Nouvel AO a preparer : {ref_aff} - {moa}"
+                html = _build_email_html(doc, public_url)
+                res_mail = envoyer_graph_simple(DESTINATAIRE_DCE, subject, html)
+                if res_mail.get("sent"):
+                    update_cosmos_doc(
+                        cosmos_cfg["endpoint"], cosmos_cfg["database"], cosmos_cfg["container"],
+                        args.doc_id, source_id,
+                        {"dce_email_sent": True, "dce_email_at": utcnow_iso()}
+                    )
+                    log("EMAIL", f"Email envoye a {', '.join(DESTINATAIRE_DCE)}")
+                else:
+                    log("EMAIL", f"WARN email non envoye : {res_mail.get('reason')}")
+            else:
+                log("EMAIL", "Email deja envoye (dce_email_sent) - skip")
+        except Exception as e:
+            log("EMAIL", f"WARN email echoue (best-effort) : {e}")
+
         log("MAIN", "SUCCESS")
         sys.exit(0)
 

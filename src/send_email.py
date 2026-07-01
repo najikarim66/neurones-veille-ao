@@ -64,6 +64,33 @@ def _send_via_graph(token: str, sender: str, sender_name: str,
             raise RuntimeError(f"Graph sendMail status {resp.status}")
 
 
+def envoyer_graph_simple(to_addresses, subject, html):
+    """Envoi Graph autonome (sujet + HTML fournis), reutilise l'app Entra (env GRAPH_*).
+    Retourne {'sent': bool, 'reason': str}. N'emet jamais d'exception."""
+    tenant = os.environ.get("GRAPH_TENANT_ID")
+    client_id = os.environ.get("GRAPH_CLIENT_ID")
+    client_secret = os.environ.get("GRAPH_CLIENT_SECRET")
+    sender = os.environ.get("GRAPH_FROM")
+    sender_name = os.environ.get("GRAPH_FROM_NAME") or "Veille AO Neurones"
+    missing = [k for k, v in {
+        "GRAPH_TENANT_ID": tenant,
+        "GRAPH_CLIENT_ID": client_id,
+        "GRAPH_CLIENT_SECRET": client_secret,
+        "GRAPH_FROM": sender,
+    }.items() if not v]
+    if missing:
+        return {"sent": False, "reason": f"Config Graph manquante : {', '.join(missing)}"}
+    try:
+        token = _get_graph_token(tenant, client_id, client_secret)
+        _send_via_graph(token, sender, sender_name, to_addresses, subject, html)
+        return {"sent": True, "reason": "OK"}
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="replace")
+        return {"sent": False, "reason": f"HTTP {e.code}: {body[:300]}"}
+    except Exception as e:
+        return {"sent": False, "reason": f"{type(e).__name__}: {e}"}
+
+
 def _color_score(score: int) -> str:
     if score >= 60:
         return "#107C41"  # vert fonce
