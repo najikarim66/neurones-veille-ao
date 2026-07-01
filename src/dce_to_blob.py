@@ -51,6 +51,39 @@ def _read_dce_recipients(cosmos_endpoint, cosmos_db, cosmos_container, source):
     return to, cc
 
 
+def _propagate_to_fiche(cosmos_endpoint, cosmos_db, doc):
+    """Propage estimation_mo -> budget_estime et caution_provisoire -> caution_prov
+    (objet partiel) sur la fiche mp_aos liee (ao_id_lie), UNIQUEMENT si le champ cible
+    est vide (ne pas ecraser une saisie manuelle). Best-effort ; skip si pas de lien
+    ou fiche absente (orphelin / DCE sans transfert)."""
+    ao_id = doc.get("ao_id_lie") if doc else None
+    if not ao_id:
+        return
+    key = os.environ.get("COSMOS_KEY")
+    if not key:
+        return
+    try:
+        fiches = CosmosClient(cosmos_endpoint, credential=key).get_database_client(cosmos_db).get_container_client("mp_aos")
+        fiche = fiches.read_item(item=ao_id, partition_key=ao_id)
+    except Exception as e:
+        log("FICHE", f"  fiche mp_aos {ao_id} illisible/absente ({e}) - skip")
+        return
+    changed = False
+    est = doc.get("estimation_mo")
+    if est is not None and fiche.get("budget_estime") is None:
+        fiche["budget_estime"] = est
+        changed = True
+    cau = doc.get("caution_provisoire")
+    if cau is not None and not fiche.get("caution_prov"):
+        fiche["caution_prov"] = {"montant": cau, "statut": "en_attente", "banque": "", "num": "", "date_emission": None}
+        changed = True
+    if changed:
+        fiches.replace_item(item=ao_id, body=fiche)
+        log("FICHE", f"  fiche {ao_id} enrichie (budget/caution)")
+    else:
+        log("FICHE", f"  fiche {ao_id} : rien a propager (deja rempli)")
+
+
 def _fmt_mad(n):
     """Montant -> 'xxx xxx,xx MAD' (format FR) ; None -> 'non precise'."""
     if n is None:
@@ -231,6 +264,12 @@ def main():
             }
         )
         log("STEP3", "Cosmos mis a jour : ready")
+
+        # ----- 3b. Propager estimation/caution vers la fiche mp_aos liee (BEST-EFFORT) -----
+        try:
+            _propagate_to_fiche(cosmos_cfg["endpoint"], cosmos_cfg["database"], doc)
+        except Exception as e:
+            log("FICHE", f"WARN propagation fiche echouee (best-effort) : {e}")
 
         # ----- 4. Email secretaire (BEST-EFFORT ; une seule fois ; jamais si failed) -----
         try:

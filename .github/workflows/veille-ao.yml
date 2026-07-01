@@ -1,14 +1,10 @@
 name: Veille AO
 
 on:
-  schedule:
-    # Cron en UTC. Casablanca = UTC+1 (UTC+0 en hiver, UTC+1 en ete - on prend ete)
-    # Pour 7h00 Casablanca : 06:00 UTC
-    # Pour 15h00 Casablanca : 14:00 UTC
-    # Pour modifier les horaires, edite ces lignes (format cron : min hour day month dow)
-    - cron: "0 6 * * 1-5"   # 7h00 Casablanca, lundi-vendredi
-    - cron: "0 14 * * 1-5"  # 15h00 Casablanca, lundi-vendredi
-  workflow_dispatch: {}     # Permet aussi un declenchement manuel via GitHub UI
+  # Plus de cron GitHub (imprecis : retards de plusieurs heures). Declenchement via
+  # workflow_dispatch uniquement : manuel (UI) ou tache planifiee locale sur le PC
+  # marocain (gh workflow run veille-ao.yml) a l'heure voulue, executee par le runner.
+  workflow_dispatch: {}
 
 jobs:
   veille:
