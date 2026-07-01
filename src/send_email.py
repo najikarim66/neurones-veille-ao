@@ -41,7 +41,8 @@ def _get_graph_token(tenant: str, client_id: str, client_secret: str) -> str:
 
 
 def _send_via_graph(token: str, sender: str, sender_name: str,
-                    to_addresses: list, subject: str, html: str) -> None:
+                    to_addresses: list, subject: str, html: str,
+                    cc_addresses: list = None) -> None:
     """POST /users/{sender}/sendMail. Graph renvoie 202 sans corps si OK."""
     message = {
         "subject": subject,
@@ -49,6 +50,8 @@ def _send_via_graph(token: str, sender: str, sender_name: str,
         "from": {"emailAddress": {"name": sender_name, "address": sender}},
         "toRecipients": [{"emailAddress": {"address": a}} for a in to_addresses],
     }
+    if cc_addresses:
+        message["ccRecipients"] = [{"emailAddress": {"address": a}} for a in cc_addresses]
     payload = json.dumps({"message": message, "saveToSentItems": False}).encode("utf-8")
     req = urllib.request.Request(
         url=f"https://graph.microsoft.com/v1.0/users/{urllib.parse.quote(sender)}/sendMail",
@@ -64,7 +67,7 @@ def _send_via_graph(token: str, sender: str, sender_name: str,
             raise RuntimeError(f"Graph sendMail status {resp.status}")
 
 
-def envoyer_graph_simple(to_addresses, subject, html):
+def envoyer_graph_simple(to_addresses, subject, html, cc_addresses=None):
     """Envoi Graph autonome (sujet + HTML fournis), reutilise l'app Entra (env GRAPH_*).
     Retourne {'sent': bool, 'reason': str}. N'emet jamais d'exception."""
     tenant = os.environ.get("GRAPH_TENANT_ID")
@@ -82,7 +85,7 @@ def envoyer_graph_simple(to_addresses, subject, html):
         return {"sent": False, "reason": f"Config Graph manquante : {', '.join(missing)}"}
     try:
         token = _get_graph_token(tenant, client_id, client_secret)
-        _send_via_graph(token, sender, sender_name, to_addresses, subject, html)
+        _send_via_graph(token, sender, sender_name, to_addresses, subject, html, cc_addresses)
         return {"sent": True, "reason": "OK"}
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", errors="replace")

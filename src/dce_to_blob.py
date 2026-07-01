@@ -28,8 +28,27 @@ from azure.cosmos import CosmosClient, exceptions as cosmos_exc
 from src.dce_download import telecharger_dce
 from src.send_email import envoyer_graph_simple
 
-# Destinataire de l'email secretaire (liste, editable ici)
-DESTINATAIRE_DCE = ["imane@neurones.ma"]
+# Destinataires par defaut si la config Cosmos (veille_config) est absente/vide
+DCE_EMAIL_FALLBACK = ["imane@neurones.ma"]
+
+
+def _read_dce_recipients(cosmos_endpoint, cosmos_db, cosmos_container, source):
+    """Lit le doc veille_config -> (to, cc). Filtre les vides ; fallback si 'to' vide.
+    Editable depuis MP Manager (page Veille AO)."""
+    key = os.environ.get("COSMOS_KEY")
+    to, cc = [], []
+    if key:
+        try:
+            client = CosmosClient(cosmos_endpoint, credential=key)
+            container = client.get_database_client(cosmos_db).get_container_client(cosmos_container)
+            cfg = container.read_item(item="veille_config", partition_key=source)
+            to = [str(e).strip() for e in (cfg.get("dce_email_to") or []) if str(e).strip()]
+            cc = [str(e).strip() for e in (cfg.get("dce_email_cc") or []) if str(e).strip()]
+        except Exception as e:
+            log("EMAIL", f"  config destinataires illisible ({e}) - fallback")
+    if not to:
+        to = list(DCE_EMAIL_FALLBACK)
+    return to, cc
 
 
 def _fmt_mad(n):
@@ -220,14 +239,17 @@ def main():
                 moa = doc.get("acheteur") or "-"
                 subject = f"Nouvel AO a preparer : {ref_aff} - {moa}"
                 html = _build_email_html(doc, public_url)
-                res_mail = envoyer_graph_simple(DESTINATAIRE_DCE, subject, html)
+                to, cc = _read_dce_recipients(
+                    cosmos_cfg["endpoint"], cosmos_cfg["database"], cosmos_cfg["container"], source_id
+                )
+                res_mail = envoyer_graph_simple(to, subject, html, cc_addresses=cc)
                 if res_mail.get("sent"):
                     update_cosmos_doc(
                         cosmos_cfg["endpoint"], cosmos_cfg["database"], cosmos_cfg["container"],
                         args.doc_id, source_id,
                         {"dce_email_sent": True, "dce_email_at": utcnow_iso()}
                     )
-                    log("EMAIL", f"Email envoye a {', '.join(DESTINATAIRE_DCE)}")
+                    log("EMAIL", f"Email envoye a {', '.join(to)}" + (f" (cc {', '.join(cc)})" if cc else ""))
                 else:
                     log("EMAIL", f"WARN email non envoye : {res_mail.get('reason')}")
             else:
