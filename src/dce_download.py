@@ -12,12 +12,17 @@ Exemple :
 """
 import sys
 import re
+import time
 import zipfile
 import json
 from pathlib import Path
 from datetime import datetime
 
-from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
+from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout, Error as PlaywrightError
+
+# Retry du telechargement DCE (echecs transitoires du portail : postback lent, session)
+DCE_RETRY_ATTEMPTS = 3
+DCE_RETRY_DELAYS = [8, 15]  # secondes de backoff entre tentatives
 
 
 def _parse_montant_fr(s):
@@ -57,7 +62,7 @@ def log(step, msg):
     print(f"[{ts}] [{step}] {msg}", flush=True)
 
 
-def telecharger_dce(ref: str, org: str, config: dict) -> Path:
+def _telecharger_dce_once(ref: str, org: str, config: dict) -> dict:
     identite = config["dce_identite"]
     racine = Path(config["stockage_local"]["racine_dce"])
     debug_dir = Path(config["stockage_local"]["racine_logs"])
@@ -213,6 +218,26 @@ def telecharger_dce(ref: str, org: str, config: dict) -> Path:
         finally:
             context.close()
             browser.close()
+
+
+def telecharger_dce(ref: str, org: str, config: dict) -> dict:
+    """Telecharge le DCE avec retry auto (echecs transitoires du portail).
+    Rejoue tout le flux dans une session fraiche jusqu'a DCE_RETRY_ATTEMPTS fois ;
+    ne retente QUE les erreurs de download (PWTimeout / RuntimeError / PlaywrightError).
+    Le retry est entierement avant tout upload/ecriture Cosmos (idempotent)."""
+    last_err = None
+    for attempt in range(1, DCE_RETRY_ATTEMPTS + 1):
+        try:
+            return _telecharger_dce_once(ref, org, config)
+        except (PWTimeout, RuntimeError, PlaywrightError) as e:
+            last_err = e
+            log("RETRY", f"tentative {attempt}/{DCE_RETRY_ATTEMPTS} echouee : {type(e).__name__}: {e}")
+            if attempt < DCE_RETRY_ATTEMPTS:
+                delay = DCE_RETRY_DELAYS[min(attempt - 1, len(DCE_RETRY_DELAYS) - 1)]
+                log("RETRY", f"  nouvelle tentative dans {delay}s")
+                time.sleep(delay)
+    log("RETRY", f"echec definitif apres {DCE_RETRY_ATTEMPTS} tentatives")
+    raise last_err
 
 
 def main():
