@@ -8,7 +8,8 @@ import re
 import urllib.parse
 from datetime import datetime
 
-from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
+import time
+from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout, Error as PlaywrightError
 from bs4 import BeautifulSoup
 
 BASE_URL = "https://www.marchespublics.gov.ma"
@@ -139,6 +140,33 @@ def parse_resultats(html: str) -> list:
     return resultats
 
 
+# Retry de l'ouverture de la page de recherche (echecs transitoires du portail :
+# net::ERR_CONNECTION_RESET, timeout). Meme politique que le DCE (d696290).
+SEARCH_RETRY_ATTEMPTS = 3
+SEARCH_RETRY_DELAYS = [8, 15]  # secondes de backoff entre tentatives
+
+
+def goto_avec_retry(page, url: str, attempts: int = SEARCH_RETRY_ATTEMPTS,
+                    delays=SEARCH_RETRY_DELAYS, sleep=time.sleep) -> None:
+    """page.goto(url) rejoue jusqu'a `attempts` fois sur PWTimeout / PlaywrightError
+    (erreurs reseau du portail). Toute autre exception propage sans retry.
+    Aucun side-effect avant : le retry est sans risque de doublon."""
+    last_err = None
+    for attempt in range(1, attempts + 1):
+        try:
+            page.goto(url, wait_until="domcontentloaded")
+            return
+        except (PWTimeout, PlaywrightError) as e:
+            last_err = e
+            log("RETRY", f"tentative {attempt}/{attempts} echouee : {type(e).__name__}: {str(e).splitlines()[0]}")
+            if attempt < attempts:
+                delay = delays[min(attempt - 1, len(delays) - 1)]
+                log("RETRY", f"  nouvelle tentative dans {delay}s")
+                sleep(delay)
+    log("RETRY", f"echec definitif apres {attempts} tentatives")
+    raise last_err
+
+
 def scraper_aos(keyword: str, page_size: int, playwright_cfg: dict) -> list:
     """
     Lance la recherche, set pageSize, parse, retourne la liste des AOs.
@@ -165,7 +193,7 @@ def scraper_aos(keyword: str, page_size: int, playwright_cfg: dict) -> list:
 
         try:
             log("STEP1", f"GET {url[:120]}...")
-            page.goto(url, wait_until="domcontentloaded")
+            goto_avec_retry(page, url)
             page.wait_for_selector('input[name$="$refCons"]', state="attached", timeout=20000)
             log("STEP1", "Page resultats chargee")
 
