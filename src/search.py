@@ -146,16 +146,42 @@ SEARCH_RETRY_ATTEMPTS = 3
 SEARCH_RETRY_DELAYS = [8, 15]  # secondes de backoff entre tentatives
 
 
+class PortailIndisponible(Exception):
+    """Le portail repond mais ne sert pas la recherche (HTTP 5xx ou page de maintenance).
+    Cause NOMMEE : ce n'est ni un bug ni un timeout anonyme."""
+
+
+MARQUEURS_INDISPONIBLE = (
+    "temporairement indisponible",
+    "temporairement suspendu",
+    "site indisponible",
+    "service unavailable",
+    "maintenance en cours",
+)
+
+
+def detecter_indisponibilite(status, texte_page: str):
+    """Pur. Retourne le message nomme si le portail est indisponible, sinon None.
+    status : code HTTP de la reponse du goto (None si inconnu) ; texte_page : texte visible."""
+    texte = " ".join((texte_page or "").split())
+    bas = texte.lower()
+    marqueur = next((m for m in MARQUEURS_INDISPONIBLE if m in bas), None)
+    if (status is not None and status >= 500) or marqueur:
+        http = f"HTTP {status}" if status is not None else "HTTP inconnu"
+        extrait = texte[:400] if texte else "page sans texte"
+        return f"portail marchespublics.gov.ma indisponible ({http}) : {extrait}"
+    return None
+
+
 def goto_avec_retry(page, url: str, attempts: int = SEARCH_RETRY_ATTEMPTS,
-                    delays=SEARCH_RETRY_DELAYS, sleep=time.sleep) -> None:
+                    delays=SEARCH_RETRY_DELAYS, sleep=time.sleep):
     """page.goto(url) rejoue jusqu'a `attempts` fois sur PWTimeout / PlaywrightError
     (erreurs reseau du portail). Toute autre exception propage sans retry.
     Aucun side-effect avant : le retry est sans risque de doublon."""
     last_err = None
     for attempt in range(1, attempts + 1):
         try:
-            page.goto(url, wait_until="domcontentloaded")
-            return
+            return page.goto(url, wait_until="domcontentloaded")
         except (PWTimeout, PlaywrightError) as e:
             last_err = e
             log("RETRY", f"tentative {attempt}/{attempts} echouee : {type(e).__name__}: {str(e).splitlines()[0]}")
@@ -165,6 +191,13 @@ def goto_avec_retry(page, url: str, attempts: int = SEARCH_RETRY_ATTEMPTS,
                 sleep(delay)
     log("RETRY", f"echec definitif apres {attempts} tentatives")
     raise last_err
+
+
+def _texte_visible(page) -> str:
+    try:
+        return page.inner_text("body", timeout=5000)
+    except Exception:
+        return ""
 
 
 def scraper_aos(keyword: str, page_size: int, playwright_cfg: dict) -> list:
@@ -193,9 +226,19 @@ def scraper_aos(keyword: str, page_size: int, playwright_cfg: dict) -> list:
 
         try:
             log("STEP1", f"GET {url[:120]}...")
-            goto_avec_retry(page, url)
-            page.wait_for_selector('input[name$="$refCons"]', state="attached", timeout=20000)
-            log("STEP1", "Page resultats chargee")
+            resp = goto_avec_retry(page, url)
+            status = resp.status if resp is not None else None
+            motif = detecter_indisponibilite(status, _texte_visible(page))
+            if motif:
+                raise PortailIndisponible(motif)
+            try:
+                page.wait_for_selector('input[name$="$refCons"]', state="attached", timeout=20000)
+            except PWTimeout:
+                motif = detecter_indisponibilite(status, _texte_visible(page))
+                if motif:
+                    raise PortailIndisponible(motif) from None
+                raise
+            log("STEP1", f"Page resultats chargee (HTTP {status})")
 
             log("STEP2", f"Set pageSize={page_size} (postback PRADO)...")
             nb_avant = page.locator('input[name$="$refCons"]').count()

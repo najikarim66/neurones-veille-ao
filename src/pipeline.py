@@ -22,7 +22,7 @@ from datetime import datetime
 from pathlib import Path
 
 # Imports relatifs au package src/
-from src.search import scraper_aos, log
+from src.search import scraper_aos, log, PortailIndisponible
 from src.score import calculer_score, filtrer_par_seuil
 from src.cosmos_client import CosmosVeilleClient
 from src.send_email import envoyer_email
@@ -75,11 +75,17 @@ def main():
 
     # ========== PHASE 1 : SCRAPE ==========
     log("PHASE", ">>> Phase 1/4 : Scrape")
-    aos = scraper_aos(
-        keyword=keywords,
-        page_size=cfg["search"]["page_size"],
-        playwright_cfg=cfg["playwright"],
-    )
+    try:
+        aos = scraper_aos(
+            keyword=keywords,
+            page_size=cfg["search"]["page_size"],
+            playwright_cfg=cfg["playwright"],
+        )
+    except PortailIndisponible as e:
+        # Cause nommee, pas de traceback : le run reste rouge (aucune veille faite).
+        log("PORTAIL", str(e))
+        log("PORTAIL", "Veille non effectuee ce creneau ; la dedup Cosmos rattrape au prochain run vert.")
+        sys.exit(2)
     log("PHASE", f"<<< {len(aos)} AO scrapes")
 
     if not aos:

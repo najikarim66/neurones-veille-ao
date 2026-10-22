@@ -40,3 +40,28 @@ class TestGotoAvecRetry(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+from src.search import detecter_indisponibilite, PortailIndisponible  # noqa: E402
+
+
+class TestDetecterIndisponibilite(unittest.TestCase):
+    PAGE_TGR = ("! Site temporairement indisponible Par mesure de precaution, ce site est "
+                "temporairement suspendu a la suite de l'annonce de vulnerabilites critiques affectant PHP.")
+
+    def test_503_page_tgr(self):
+        m = detecter_indisponibilite(503, self.PAGE_TGR)
+        self.assertIn("HTTP 503", m)
+        self.assertIn("temporairement indisponible", m)
+
+    def test_200_mais_page_maintenance(self):
+        self.assertIsNotNone(detecter_indisponibilite(200, "Maintenance en cours, revenez plus tard"))
+
+    def test_200_page_normale(self):
+        self.assertIsNone(detecter_indisponibilite(200, "Resultats de la recherche : 500 consultations"))
+
+    def test_statut_inconnu_page_normale(self):
+        self.assertIsNone(detecter_indisponibilite(None, "Resultats"))
+
+    def test_exception_nommee(self):
+        self.assertTrue(issubclass(PortailIndisponible, Exception))
