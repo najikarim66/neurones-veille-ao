@@ -1,0 +1,58 @@
+{
+  "permissions": {
+    "allow": [
+      "Read",
+      "Edit",
+      "Write",
+      "Bash(git:*)",
+      "Bash(npm:*)",
+      "Bash(npx:*)",
+      "Bash(node:*)",
+      "Bash(gh run:*)",
+      "Bash(gh pr:*)",
+      "Bash(gh api:*)",
+      "Bash(az account show:*)",
+      "Bash(az group show:*)",
+      "Bash(az group list:*)",
+      "Bash(az resource show:*)",
+      "Bash(az resource list:*)",
+      "Bash(az functionapp show:*)",
+      "Bash(az functionapp list:*)",
+      "Bash(az functionapp config show:*)",
+      "Bash(az functionapp config appsettings list:*)",
+      "Bash(az functionapp function list:*)",
+      "Bash(az webapp show:*)",
+      "Bash(az webapp list:*)",
+      "Bash(az staticwebapp show:*)",
+      "Bash(az staticwebapp list:*)",
+      "Bash(az cosmosdb show:*)",
+      "Bash(az cosmosdb list:*)",
+      "Bash(az cosmosdb sql database list:*)",
+      "Bash(az cosmosdb sql container list:*)",
+      "Bash(az cosmosdb sql container show:*)",
+      "Bash(az storage account show:*)",
+      "Bash(az storage account list:*)",
+      "Bash(az monitor metrics list:*)",
+      "Bash(az monitor app-insights query:*)",
+      "Bash(az monitor log-analytics query:*)"
+    ],
+    "ask": [
+      "Bash(git reset --hard:*)"
+    ],
+    "deny": [
+      "Bash(git push --force:*)",
+      "Bash(git push -f:*)",
+      "Bash(git push * --force*)",
+      "Bash(git push * -f *)",
+      "Bash(rm -rf:*)",
+      "Bash(rm -fr:*)",
+      "Bash(az ad app credential:*)",
+      "Bash(az keyvault secret set:*)",
+      "Bash(az keyvault secret delete:*)",
+      "Bash(az cosmosdb delete:*)",
+      "Bash(az cosmosdb sql database delete:*)",
+      "Bash(az cosmosdb sql container delete:*)",
+      "Bash(az * delete*)"
+    ]
+  }
+}
