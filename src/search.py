@@ -35,109 +35,124 @@ def construire_url_fiche(ref_cons: str, org: str) -> str:
     )
 
 
+# Mise en page du portail depuis sa reouverture (constatee le 28/10/2026) : une CARTE
+# par consultation (div.generalBox), plus de tableau ni de champs caches $refCons.
+# Les identifiants (refConsultation, orgAcronyme) se lisent sur le lien de la fiche.
+# La categorie et la date de publication ne figurent plus sur la carte : la categorie
+# est relue par trois recherches filtrees (voir scraper_aos), la date de publication
+# n'est plus lue. Une cle absente n'ecrase pas la valeur deja connue en Cosmos.
+
+SEL_CARTE = "div.generalBox"
+SEL_NOMBRE = "#ctl0_CONTENU_PAGE_resultSearch_nombreElement"
+SEL_NUM_PAGE = "#ctl0_CONTENU_PAGE_resultSearch_numPageTop"
+SEL_NB_PAGES = "#ctl0_CONTENU_PAGE_resultSearch_nombrePageTop"
+SEL_PAGE_SIZE = 'select[name$="$listePageSizeTop"]'
+SEL_FORM_MOTS = "#ctl0_CONTENU_PAGE_AdvancedSearch_keywordSearch"
+SEL_FORM_CATEGORIE = 'select[name$="AdvancedSearch$categorie"]'
+SEL_FORM_LANCER = "#ctl0_CONTENU_PAGE_AdvancedSearch_lancerRecherche"
+
+CATEGORIES = {"1": "Travaux", "2": "Fournitures", "3": "Services"}
+
+MOIS = {
+    "jan": 1, "janv": 1, "feb": 2, "fev": 2, "fevr": 2, "mar": 3, "mars": 3, "apr": 4, "avr": 4,
+    "may": 5, "mai": 5, "jun": 6, "juin": 6, "jul": 7, "juil": 7, "aug": 8, "aou": 8, "aout": 8,
+    "sep": 9, "sept": 9, "oct": 10, "nov": 11, "dec": 12,
+}
+
+
+def _sans_accents(t: str) -> str:
+    import unicodedata
+    return "".join(c for c in unicodedata.normalize("NFD", t) if unicodedata.category(c) != "Mn")
+
+
+def date_carte(texte: str) -> str:
+    """Pur. 'Mar 08 Dec 2026' -> '08/12/2026' ; accepte aussi dd/mm/yyyy. '' si illisible."""
+    t = " ".join((texte or "").split())
+    m = re.search(r"(\d{2}/\d{2}/\d{4})", t)
+    if m:
+        return m.group(1)
+    m = re.search(r"(\d{1,2})\s+([A-Za-z\u00c0-\u017f]+)\.?\s+(\d{4})", t)
+    if not m:
+        return ""
+    mois = MOIS.get(_sans_accents(m.group(2)).lower().rstrip("."))
+    if not mois:
+        return ""
+    return f"{int(m.group(1)):02d}/{mois:02d}/{m.group(3)}"
+
+
+def _texte(el) -> str:
+    return " ".join(el.get_text(" ", strip=True).split()) if el is not None else ""
+
+
 def parse_resultats(html: str) -> list:
-    """Parse le HTML de la page resultats et retourne la liste des AOs."""
+    """Pur. Parse une page de resultats (cartes) et retourne la liste des AO."""
     soup = BeautifulSoup(html, "html.parser")
     resultats = []
-
-    inputs_ref = soup.select('input[name$="$refCons"]')
-    for inp_ref in inputs_ref:
-        tr = inp_ref.find_parent("tr")
-        if tr is None:
+    for carte in soup.select(SEL_CARTE):
+        lien = carte.select_one('a[href*="EntrepriseDetailsConsultation"][href*="refConsultation="]')
+        if lien is None:
+            continue
+        q = urllib.parse.parse_qs(urllib.parse.urlparse(lien.get("href", "")).query)
+        ref_cons = (q.get("refConsultation") or [""])[0].strip()
+        org = (q.get("orgAcronyme") or [""])[0].strip()
+        if not ref_cons:
             continue
 
-        ao = {
-            "ref_consultation": "",
-            "org_acronyme": "",
-            "type_procedure": "",
-            "categorie": "",
-            "date_publication": "",
-            "reference_ao": "",
-            "objet": "",
-            "acheteur": "",
-            "lieu_execution": "",
-            "date_limite": "",
-            "heure_limite": "",
-        }
+        ao = {"ref_consultation": ref_cons, "org_acronyme": org}
+        ao["type_procedure"] = _texte(carte.select_one("span.verticalText"))
+        ao["reference_ao"] = _texte(carte.select_one('[id$="_referencem"]'))
+        ao["objet"] = re.sub(r"^Objet\s*:\s*", "", _texte(carte.select_one("div.p-objet")), flags=re.I)
+        ach = carte.select_one("div.title .a-card") or carte.select_one("div.title")
+        ao["acheteur"] = re.sub(r"^Acheteur public\s*:\s*", "", _texte(ach), flags=re.I)
 
-        try:
-            ao["ref_consultation"] = inp_ref.get("value", "").strip()
-            inp_org = tr.select_one('input[name$="$orgCons"]')
-            ao["org_acronyme"] = inp_org.get("value", "").strip() if inp_org else ""
-        except Exception:
-            pass
+        estim = _texte(carte.select_one("span.estim-mad"))
+        if estim:
+            ao["estimation_ttc"] = estim
 
-        try:
-            td_ref = tr.select_one('td[headers="cons_ref"]')
-            if td_ref:
-                first_div = td_ref.select_one("div.line-info-bulle")
-                if first_div:
-                    ao["type_procedure"] = first_div.get_text(" ", strip=True).split("...")[0].strip()
-                cat_div = td_ref.select_one('[id$="panelBlocCategorie"]')
-                if cat_div:
-                    ao["categorie"] = cat_div.get_text(strip=True)
-                m = re.search(r"(\d{2}/\d{2}/\d{4})", td_ref.get_text())
-                if m:
-                    ao["date_publication"] = m.group(1)
-        except Exception:
-            pass
+        lieu = ""
+        lieu_bloc = carte.select_one('[id$="_panelBlocLieuxExec"]')
+        if lieu_bloc is not None:
+            bulle = lieu_bloc.select_one('div.info-bulle[id$="infosLieuExecution"] div')
+            lieu = _texte(bulle) or re.sub(r"\s*\.\.\.\s*$", "", _texte(lieu_bloc.select_one("strong")))
+        ao["lieu_execution"] = lieu
 
-        try:
-            td_int = tr.select_one('td[headers="cons_intitule"]')
-            if td_int:
-                ref_span = td_int.select_one("span.ref")
-                if ref_span:
-                    ao["reference_ao"] = ref_span.get_text(strip=True)
-                objet_bulle = td_int.select_one('[id$="infosBullesObjet"] div')
-                if objet_bulle:
-                    ao["objet"] = objet_bulle.get_text(" ", strip=True)
-                else:
-                    obj_div = td_int.select_one('[id$="panelBlocObjet"]')
-                    if obj_div:
-                        txt = obj_div.get_text(" ", strip=True)
-                        txt = re.sub(r"^Objet\s*:\s*", "", txt)
-                        txt = re.sub(r"\.{3,}\s*$", "", txt).strip()
-                        ao["objet"] = txt
-                ach_div = td_int.select_one('[id$="panelBlocDenomination"]')
-                if ach_div:
-                    txt = ach_div.get_text(" ", strip=True)
-                    txt = re.sub(r"^Acheteur public\s*:\s*", "", txt)
-                    ao["acheteur"] = txt
-        except Exception:
-            pass
+        ao["date_limite"], ao["heure_limite"] = "", ""
+        gauche = carte.select_one("div.leftColumn")
+        if gauche is not None:
+            for bloc in gauche.select("div.limita"):
+                t = _texte(bloc)
+                d = date_carte(t)
+                h = re.search(r"\b(\d{2}:\d{2})\b", t)
+                if d and not ao["date_limite"]:
+                    ao["date_limite"] = d
+                if h and not ao["heure_limite"]:
+                    ao["heure_limite"] = h.group(1)
 
-        try:
-            td_lieu = tr.select_one('td[headers="cons_lieuExe"]')
-            if td_lieu:
-                lieu_div = td_lieu.select_one('[id$="panelBlocLieuxExec"]')
-                if lieu_div:
-                    txt = lieu_div.get_text(" ", strip=True)
-                    txt = re.sub(r"\s+", " ", txt).strip()
-                    ao["lieu_execution"] = txt
-        except Exception:
-            pass
-
-        try:
-            td_end = tr.select_one('td[headers="cons_dateEnd"]')
-            if td_end:
-                txt = td_end.get_text(" ", strip=True)
-                m = re.search(r"(\d{2}/\d{2}/\d{4}).*?(\d{2}:\d{2})", txt)
-                if m:
-                    ao["date_limite"] = m.group(1)
-                    ao["heure_limite"] = m.group(2)
-                else:
-                    m2 = re.search(r"(\d{2}/\d{2}/\d{4})", txt)
-                    if m2:
-                        ao["date_limite"] = m2.group(1)
-        except Exception:
-            pass
-
-        ao["lien_fiche"] = construire_url_fiche(ao["ref_consultation"], ao["org_acronyme"])
-
-        if ao["ref_consultation"]:
-            resultats.append(ao)
-
+        ao["lien_fiche"] = construire_url_fiche(ref_cons, org)
+        resultats.append(ao)
     return resultats
+
+
+def attribuer_categories(aos: list, refs_par_categorie: dict) -> dict:
+    """Pur. Pose ao['categorie'] d'apres {libelle: set(ref_consultation)}.
+    Un AO present dans plusieurs categories garde la premiere dans l'ordre Travaux,
+    Fournitures, Services et est compte en 'multiples'.
+    Un AO sans categorie n'a PAS de cle 'categorie' (la valeur Cosmos deja connue est gardee).
+    Retourne le bilan {'avec': n, 'sans': [refs], 'multiples': [refs]}."""
+    ordre = [c for c in ("Travaux", "Fournitures", "Services") if c in refs_par_categorie]
+    bilan = {"avec": 0, "sans": [], "multiples": []}
+    for ao in aos:
+        ref = ao["ref_consultation"]
+        trouvees = [c for c in ordre if ref in refs_par_categorie[c]]
+        if trouvees:
+            ao["categorie"] = trouvees[0]
+            bilan["avec"] += 1
+            if len(trouvees) > 1:
+                bilan["multiples"].append(ref)
+        else:
+            ao.pop("categorie", None)
+            bilan["sans"].append(ref)
+    return bilan
 
 
 # Retry de l'ouverture de la page de recherche (echecs transitoires du portail :
@@ -200,9 +215,101 @@ def _texte_visible(page) -> str:
         return ""
 
 
+def _attendre_resultats(page, status):
+    """Attend le compteur de resultats ; nomme l'indisponibilite du portail sinon."""
+    try:
+        page.wait_for_selector(SEL_NOMBRE, state="attached", timeout=30000)
+    except PWTimeout:
+        motif = detecter_indisponibilite(status, _texte_visible(page))
+        if motif:
+            raise PortailIndisponible(motif) from None
+        raise
+
+
+def _repos(page, timeout_ms: int = 10000):
+    """Le portail garde des requetes ouvertes : 'networkidle' peut ne jamais venir. Non bloquant."""
+    try:
+        page.wait_for_load_state("networkidle", timeout=timeout_ms)
+    except PWTimeout:
+        pass
+
+
+def _attendre_cartes(page, attendu: int, num: str, minimum: int = 0, ref_avant: str = None,
+                     delai_s: float = 120, pas_s: float = 2.0, stable_n: int = 4):
+    """Attend la fin du postback PRADO de la page `num` : sortie des que `attendu` cartes
+    sont affichees, ou quand le nombre de cartes (> minimum) est stable sur `stable_n`
+    lectures avec le bon numero de page. Le portail annonce parfois quelques AO de plus
+    qu'il n'en affiche : l'ecart se voit dans le bilan « non lu(s) », il ne bloque pas."""
+    fin = time.monotonic() + delai_s
+    dernier, stables = -1, 0
+    while time.monotonic() < fin:
+        try:
+            n, v, r = page.evaluate(
+                "([sc, sp, sr]) => [document.querySelectorAll(sc).length, "
+                "(document.querySelector(sp) || {}).value || '', "
+                "((document.querySelector(sr) || {}).innerText || '').trim()]",
+                [SEL_CARTE, SEL_NUM_PAGE, '[id$="_referencem"]'])
+        except PlaywrightError:
+            n, v, r = -1, "", ""  # navigation PRADO en cours
+        if ref_avant is not None and r == ref_avant:
+            n = -1  # la page affichee est encore l'ancienne
+        if v == num and n == attendu:
+            break
+        if v == num and n > minimum and n == dernier:
+            stables += 1
+            if stables >= stable_n:
+                break
+        else:
+            stables = 0
+        dernier = n
+        page.wait_for_timeout(int(pas_s * 1000))
+    else:
+        log("PAGE", f"  WARN page {num} : delai depasse, {page.locator(SEL_CARTE).count()} carte(s) affichee(s)")
+    _repos(page)
+
+
+def _lire_toutes_les_pages(page, page_size: int, etiquette: str) -> tuple:
+    """Page de resultats deja chargee -> (aos de TOUTES les pages, nombre annonce)."""
+    annonce = int(re.sub(r"\D", "", page.inner_text(SEL_NOMBRE)) or 0)
+    if annonce == 0:
+        log(etiquette, "0 resultat annonce")
+        return [], 0
+    attendu_p1 = min(annonce, page_size)
+    avant = page.locator(SEL_CARTE).count()
+    if annonce > avant:
+        _repos(page)
+        page.select_option(SEL_PAGE_SIZE, value=str(page_size))
+        _attendre_cartes(page, attendu_p1, "1", minimum=avant)
+    nb_pages = -(-annonce // page_size)
+    aos, vus = [], set()
+    for num in range(1, nb_pages + 1):
+        if num > 1:
+            ref_avant = page.locator('[id$="_referencem"]').first.inner_text().strip()
+            page.fill(SEL_NUM_PAGE, str(num))
+            page.press(SEL_NUM_PAGE, "Enter")
+            _attendre_cartes(page, min(page_size, annonce - (num - 1) * page_size), str(num), ref_avant=ref_avant)
+        lus = parse_resultats(page.content())
+        nouveaux = [a for a in lus if a["ref_consultation"] not in vus]
+        vus.update(a["ref_consultation"] for a in nouveaux)
+        aos.extend(nouveaux)
+        log(etiquette, f"  page {num}/{nb_pages} : {len(lus)} carte(s), {len(nouveaux)} nouvelle(s)")
+    log(etiquette, f"{annonce} annonce(s) · {len(aos)} lu(s) · {annonce - len(aos)} non lu(s)")
+    return aos, annonce
+
+
+def _recherche_formulaire(page, keyword: str, code_categorie: str):
+    goto_avec_retry(page, f"{BASE_URL}/index.php?page=entreprise.EntrepriseAdvancedSearch&searchAnnCons")
+    page.fill(SEL_FORM_MOTS, keyword)
+    page.select_option(SEL_FORM_CATEGORIE, code_categorie)
+    page.click(SEL_FORM_LANCER)
+    page.wait_for_selector(SEL_NOMBRE, state="attached", timeout=60000)
+    _repos(page)
+
+
 def scraper_aos(keyword: str, page_size: int, playwright_cfg: dict) -> list:
     """
-    Lance la recherche, set pageSize, parse, retourne la liste des AOs.
+    Recherche par mots-cles, lit TOUTES les pages de resultats (cartes), puis relit la
+    categorie par trois recherches filtrees (Travaux, Fournitures, Services).
 
     Aucun side-effect (pas de fichiers ecrits, pas de Cosmos, pas d'email).
     """
@@ -231,53 +338,28 @@ def scraper_aos(keyword: str, page_size: int, playwright_cfg: dict) -> list:
             motif = detecter_indisponibilite(status, _texte_visible(page))
             if motif:
                 raise PortailIndisponible(motif)
-            try:
-                page.wait_for_selector('input[name$="$refCons"]', state="attached", timeout=20000)
-            except PWTimeout:
-                motif = detecter_indisponibilite(status, _texte_visible(page))
-                if motif:
-                    raise PortailIndisponible(motif) from None
-                raise
+            _attendre_resultats(page, status)
             log("STEP1", f"Page resultats chargee (HTTP {status})")
 
-            log("STEP2", f"Set pageSize={page_size} (postback PRADO)...")
-            nb_avant = page.locator('input[name$="$refCons"]').count()
-            log("STEP2", f"  Resultats avant changement : {nb_avant}")
+            log("STEP2", f"Lecture de toutes les pages (taille {page_size})")
+            resultats, _ = _lire_toutes_les_pages(page, page_size, "STEP2")
 
-            try:
-                page.wait_for_selector('select[name$="$listePageSizeBottom"]', timeout=5000)
-            except PWTimeout:
-                log("STEP2", "  WARN: select pageSize introuvable, on garde pageSize defaut")
-            else:
+            log("STEP3", "Categories : trois recherches filtrees")
+            refs_par_categorie = {}
+            for code, libelle in CATEGORIES.items():
                 try:
-                    page.select_option('select[name$="$listePageSizeBottom"]', value=str(page_size))
-                    try:
-                        page.wait_for_function(
-                            """(prev) => {
-                                const inputs = document.querySelectorAll('input[name$="$refCons"]');
-                                return inputs.length !== prev;
-                            }""",
-                            arg=nb_avant,
-                            timeout=30000,
-                        )
-                        log("STEP2", "  Postback PRADO detecte (DOM mis a jour)")
-                    except PWTimeout:
-                        log("STEP2", "  WARN: nb resultats inchange apres select_option")
-                    page.wait_for_load_state("networkidle", timeout=15000)
+                    _recherche_formulaire(page, keyword, code)
+                    aos_cat, _ = _lire_toutes_les_pages(page, page_size, f"CAT-{libelle}")
+                    refs_par_categorie[libelle] = {a["ref_consultation"] for a in aos_cat}
                 except Exception as e:
-                    log("STEP2", f"  WARN: {type(e).__name__}: {e}")
-                    page.wait_for_timeout(3000)
-
-            page.wait_for_selector('input[name$="$refCons"]', state="attached", timeout=20000)
-            page.wait_for_load_state("networkidle", timeout=20000)
-            nb = page.locator('input[name$="$refCons"]').count()
-            log("STEP2", f"Tableau elargi pret ({nb} resultats detectes)")
-
-            html = page.content()
-            log("STEP3", f"HTML recupere : {len(html):,} chars")
-
-            resultats = parse_resultats(html)
-            log("STEP3", f"Parsing : {len(resultats)} AO extraits")
+                    log("STEP3", f"  WARN categorie {libelle} non relue : {type(e).__name__}: {str(e).splitlines()[0]}")
+            bilan = attribuer_categories(resultats, refs_par_categorie)
+            log("STEP3", f"{len(resultats)} AO lus · {bilan['avec']} avec categorie · "
+                         f"{len(bilan['sans'])} sans categorie (valeur Cosmos conservee)"
+                         + (f" · {len(bilan['multiples'])} dans plusieurs categories" if bilan["multiples"] else ""))
+            manquantes = [c for c in CATEGORIES.values() if c not in refs_par_categorie]
+            if manquantes:
+                log("STEP3", f"  categories non relues : {', '.join(manquantes)}")
 
             return resultats
 
