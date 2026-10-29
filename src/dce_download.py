@@ -13,6 +13,7 @@ Exemple :
 import sys
 import re
 import time
+import random
 import zipfile
 import json
 from pathlib import Path
@@ -20,9 +21,16 @@ from datetime import datetime
 
 from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout, Error as PlaywrightError
 
-# Retry du telechargement DCE (echecs transitoires du portail : postback lent, session)
+# Retry du telechargement DCE (echecs transitoires du portail : postback lent, session).
+# 29/10/2026 : six DCE demandes en 3 minutes, quatre en echec -- le portail ralentit quand
+# plusieurs sessions le chargent en meme temps, et des reprises a 8 s / 15 s retombaient
+# toutes ensemble sur un portail encore sature. Reprises plus longues et ETALEES (alea),
+# pour que des runs lances ensemble ne se represent pas ensemble.
 DCE_RETRY_ATTEMPTS = 3
-DCE_RETRY_DELAYS = [8, 15]  # secondes de backoff entre tentatives
+DCE_RETRY_DELAYS = [45, 90]  # secondes de backoff entre tentatives, avant alea
+DCE_RETRY_ALEA_S = 30        # + 0 a 30 s tires au hasard a chaque reprise
+# Pire duree d'une tentative en echec : goto 30 + formulaire 15 + valider 15 + telechargement 90
+DCE_TENTATIVE_MAX_S = 30 + 15 + 15 + 90
 
 
 def _parse_montant_fr(s):
@@ -220,7 +228,14 @@ def _telecharger_dce_once(ref: str, org: str, config: dict) -> dict:
             browser.close()
 
 
-def telecharger_dce(ref: str, org: str, config: dict) -> dict:
+def delai_reprise(attempt: int, alea=random.uniform) -> float:
+    """Attente avant la reprise qui suit la tentative `attempt` (1-based) : base + alea."""
+    base = DCE_RETRY_DELAYS[min(attempt - 1, len(DCE_RETRY_DELAYS) - 1)]
+    return round(base + alea(0, DCE_RETRY_ALEA_S), 1)
+
+
+def telecharger_dce(ref: str, org: str, config: dict, sleep=time.sleep, alea=random.uniform,
+                    _une_fois=None) -> dict:
     """Telecharge le DCE avec retry auto (echecs transitoires du portail).
     Rejoue tout le flux dans une session fraiche jusqu'a DCE_RETRY_ATTEMPTS fois ;
     ne retente QUE les erreurs de download (PWTimeout / RuntimeError / PlaywrightError).
@@ -228,14 +243,14 @@ def telecharger_dce(ref: str, org: str, config: dict) -> dict:
     last_err = None
     for attempt in range(1, DCE_RETRY_ATTEMPTS + 1):
         try:
-            return _telecharger_dce_once(ref, org, config)
+            return (_une_fois or _telecharger_dce_once)(ref, org, config)
         except (PWTimeout, RuntimeError, PlaywrightError) as e:
             last_err = e
             log("RETRY", f"tentative {attempt}/{DCE_RETRY_ATTEMPTS} echouee : {type(e).__name__}: {e}")
             if attempt < DCE_RETRY_ATTEMPTS:
-                delay = DCE_RETRY_DELAYS[min(attempt - 1, len(DCE_RETRY_DELAYS) - 1)]
+                delay = delai_reprise(attempt, alea)
                 log("RETRY", f"  nouvelle tentative dans {delay}s")
-                time.sleep(delay)
+                sleep(delay)
     log("RETRY", f"echec definitif apres {DCE_RETRY_ATTEMPTS} tentatives")
     raise last_err
 
