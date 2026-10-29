@@ -24,6 +24,7 @@ from pathlib import Path
 # Imports relatifs au package src/
 from src.search import scraper_aos, log, PortailIndisponible
 from src.score import calculer_score, filtrer_par_seuil
+from src.purge import purger
 from src.cosmos_client import CosmosVeilleClient
 from src.send_email import envoyer_email
 
@@ -135,6 +136,13 @@ def main():
             except Exception as e:
                 log("COSMOS", f"  ERROR upsert ref={ao.get('ref_consultation')}: {e}")
         log("PHASE", f"<<< Cosmos : {nb_created} crees | {nb_updated} mis a jour")
+
+        # AO echus non traites : supprimes, sans archive -- voir src/purge.py
+        if cfg.get("purge", {}).get("actif"):
+            try:
+                purger(cosmos.container, cfg["cosmos"]["source_id"])
+            except Exception as e:
+                log("PURGE", f"  ERROR purge non faite : {type(e).__name__}: {e}")
 
         # Recuperer les VERTS actifs pour rappel
         rappel_cfg = cfg["email"]["rappel_verts_actifs"]

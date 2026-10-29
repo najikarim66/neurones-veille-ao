@@ -193,6 +193,11 @@
     "timeout_download_ms": 90000
   },
 
+  "purge": {
+    "_comment": "Suppression auto des AO echus non traites, sans archive (decision Karim 29/10/2026). Voir src/purge.py.",
+    "actif": true
+  },
+
   "cosmos": {
     "_comment": "Variable d'env COSMOS_KEY doit etre definie. Container existant : mp_veille_ao PK /source.",
     "endpoint": "https://btp-pointage-db.documents.azure.com:443/",
