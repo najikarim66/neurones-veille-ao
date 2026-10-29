@@ -24,6 +24,7 @@ from pathlib import Path
 
 from azure.storage.blob import BlobServiceClient, BlobSasPermissions, generate_blob_sas
 from azure.cosmos import CosmosClient, exceptions as cosmos_exc
+from azure.core import MatchConditions
 
 from src.dce_download import telecharger_dce
 from src.send_email import envoyer_graph_simple
@@ -192,13 +193,59 @@ def upload_blob_with_sas(local_zip_path, ref, org, account, account_key, contain
     return blob_name, public_url, size
 
 
+# Statuts « en cours » : un run interrompu (delai depasse, annulation, runner coupe) n'atteint
+# jamais le bloc except de main() et laissait le doc ainsi -- le bouton DCE de MP restait en
+# sablier et refusait toute relance (incident du 29/10/2026, 1049534).
+STATUTS_EN_COURS = ("queued", "downloading")
+MOTIF_INTERROMPU = ("Run interrompu avant la fin (delai depasse ou annule) : "
+                    "aucun DCE recu, relancer le telechargement")
+
+
+def maj_si_interrompu(doc):
+    """Mises a jour a poser sur un doc apres un run interrompu, ou None s'il ne faut rien toucher
+    (DCE pret, echec deja nomme par main(), doc absent)."""
+    if not doc or doc.get("dce_status") not in STATUTS_EN_COURS:
+        return None
+    return {"dce_status": "failed", "dce_error": MOTIF_INTERROMPU}
+
+
+def marquer_interrompu(cosmos_cfg, doc_id):
+    key = os.environ.get("COSMOS_KEY")
+    if not key:
+        raise RuntimeError("COSMOS_KEY non defini")
+    container = (CosmosClient(cosmos_cfg["endpoint"], credential=key)
+                 .get_database_client(cosmos_cfg["database"])
+                 .get_container_client(cosmos_cfg["container"]))
+    try:
+        doc = container.read_item(item=doc_id, partition_key=cosmos_cfg["source_id"])
+    except cosmos_exc.CosmosResourceNotFoundError:
+        log("INTERROMPU", f"Doc {doc_id} introuvable : rien a marquer")
+        return
+    maj = maj_si_interrompu(doc)
+    if maj is None:
+        log("INTERROMPU", f"Statut '{doc.get('dce_status')}' laisse tel quel")
+        return
+    doc.update(maj)
+    doc["date_derniere_mise_a_jour"] = utcnow_iso()
+    # etag : si un autre run a ecrit entre-temps (DCE pret), on ne l'ecrase pas
+    container.replace_item(item=doc_id, body=doc, etag=doc["_etag"], match_condition=MatchConditions.IfNotModified)
+    log("INTERROMPU", f"Statut '{maj['dce_status']}' pose : {MOTIF_INTERROMPU}")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--ref", required=True)
     parser.add_argument("--org", required=True)
     parser.add_argument("--doc-id", required=True)
     parser.add_argument("--config", default="config.json")
+    parser.add_argument("--interrompu", action="store_true",
+                        help="etape de secours du workflow : nomme l'echec d'un run interrompu")
     args = parser.parse_args()
+
+    if args.interrompu:
+        config = json.loads(Path(args.config).read_text(encoding="utf-8"))
+        marquer_interrompu(config["cosmos"], args.doc_id)
+        sys.exit(0)
 
     log("MAIN", f"=== DCE on demand : ref={args.ref} org={args.org} ===")
 

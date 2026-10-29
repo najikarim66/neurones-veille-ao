@@ -23,7 +23,7 @@ jobs:
     # 40 s depuis le PC marocain. Meme runner que la veille ; un seul runner = des DCE
     # demandes ensemble passent l'un apres l'autre, sans etre annules.
     runs-on: [self-hosted, maroc]
-    timeout-minutes: 15  # 3 tentatives + reprises etalees : voir DCE_TENTATIVE_MAX_S
+    timeout-minutes: 18  # installation + etape principale (12) + etape de secours (2) : voir test_dce_interrompu
 
     steps:
       - name: Checkout
@@ -47,6 +47,7 @@ jobs:
 
       - name: Download DCE + upload Blob + update Cosmos
         shell: powershell
+        timeout-minutes: 12  # sous le job (18) : l'etape de secours ci-dessous a le temps de tourner
         env:
           COSMOS_KEY: ${{ secrets.COSMOS_KEY }}
           AZURE_STORAGE_ACCOUNT: ${{ secrets.AZURE_STORAGE_ACCOUNT }}
@@ -62,3 +63,18 @@ jobs:
           DCE_DOC_ID: ${{ inputs.cosmos_doc_id }}
         run: |
           & "C:\actions-runner\veille-venv\Scripts\python.exe" -m src.dce_to_blob --ref "$env:DCE_REF" --org "$env:DCE_ORG" --doc-id "$env:DCE_DOC_ID"
+
+      # Run interrompu (delai depasse, annule, plantage) : le doc ne reste pas en « downloading »,
+      # sinon MP affiche un sablier sans fin et refuse la relance. Sans effet si le DCE est pret
+      # ou si l'echec est deja nomme.
+      - name: Nommer un run interrompu
+        if: failure() || cancelled()
+        shell: powershell
+        timeout-minutes: 2
+        env:
+          COSMOS_KEY: ${{ secrets.COSMOS_KEY }}
+          DCE_REF: ${{ inputs.ref_consultation }}
+          DCE_ORG: ${{ inputs.org_acronyme }}
+          DCE_DOC_ID: ${{ inputs.cosmos_doc_id }}
+        run: |
+          & "C:\actions-runner\veille-venv\Scripts\python.exe" -m src.dce_to_blob --interrompu --ref "$env:DCE_REF" --org "$env:DCE_ORG" --doc-id "$env:DCE_DOC_ID"
