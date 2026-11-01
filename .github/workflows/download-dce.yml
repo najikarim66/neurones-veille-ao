@@ -23,7 +23,7 @@ jobs:
     # 40 s depuis le PC marocain. Meme runner que la veille ; un seul runner = des DCE
     # demandes ensemble passent l'un apres l'autre, sans etre annules.
     runs-on: [self-hosted, maroc]
-    timeout-minutes: 18  # installation + etape principale (12) + etape de secours (2) : voir test_dce_interrompu
+    timeout-minutes: 42  # installation + etape principale (12) + releve de l'etude MP (22) + secours (2) : voir test_dce_interrompu
 
     steps:
       - name: Checkout
@@ -63,6 +63,17 @@ jobs:
           DCE_DOC_ID: ${{ inputs.cosmos_doc_id }}
         run: |
           & "C:\actions-runner\veille-venv\Scripts\python.exe" -m src.dce_to_blob --ref "$env:DCE_REF" --org "$env:DCE_ORG" --doc-id "$env:DCE_DOC_ID"
+
+      # Etude d'AO (MP, 01/11/2026) : le DCE est pret -> MP lance la pre-etude si le score depasse
+      # le seuil ; ce runner sert d'horloge (tick chaque minute tant qu'une etude est en cours).
+      # Aucune cle ici : l'analyse vit dans MP. Jamais bloquant (continue-on-error).
+      - name: Relever l'etude d'AO dans MP
+      if: success()
+      continue-on-error: true
+      shell: powershell
+      timeout-minutes: 22
+      run: |
+        & "C:actions-runnereille-venvScriptspython.exe" -m src.etude_tick
 
       # Run interrompu (delai depasse, annule, plantage) : le doc ne reste pas en « downloading »,
       # sinon MP affiche un sablier sans fin et refuse la relance. Sans effet si le DCE est pret

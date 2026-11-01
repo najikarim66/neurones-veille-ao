@@ -26,7 +26,8 @@ from src.search import scraper_aos, log, PortailIndisponible
 from src.score import calculer_score, filtrer_par_seuil
 from src.purge import purger
 from src.cosmos_client import CosmosVeilleClient
-from src.send_email import envoyer_email
+from src.send_email import envoyer_email, envoyer_graph_simple
+from src.coffre_alerte import verifier as verifier_coffre
 
 
 def charger_config(path: str = "config.json") -> dict:
@@ -143,6 +144,14 @@ def main():
                 purger(cosmos.container, cfg["cosmos"]["source_id"])
             except Exception as e:
                 log("PURGE", f"  ERROR purge non faite : {type(e).__name__}: {e}")
+
+        # Documents de la societe (coffre MP) qui expirent sous 15 jours : un e-mail par version
+        # -- voir src/coffre_alerte.py. Jamais bloquant pour la veille.
+        if not args.no_email:
+            try:
+                verifier_coffre(cosmos.db, lambda to, s, h: envoyer_graph_simple(to, s, h))
+            except Exception as e:
+                log("COFFRE", f"  ERROR alerte coffre non verifiee : {type(e).__name__}: {e}")
 
         # Recuperer les VERTS actifs pour rappel
         rappel_cfg = cfg["email"]["rappel_verts_actifs"]
