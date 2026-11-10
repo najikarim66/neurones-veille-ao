@@ -31,3 +31,6 @@ secrets.json
 # Playwright
 test-results/
 playwright-report/
+
+# cause nommee du dernier passage (ecrite par le pipeline, lue par l alerte mail) : jamais commitee
+veille-echec.txt
