@@ -73,7 +73,7 @@ jobs:
         shell: powershell
         timeout-minutes: 22
         run: |
-          & "C:actions-runnereille-venvScriptspython.exe" -m src.etude_tick
+          & "C:\actions-runner\veille-venv\Scripts\python.exe" -m src.etude_tick
 
       # Run interrompu (delai depasse, annule, plantage) : le doc ne reste pas en « downloading »,
       # sinon MP affiche un sablier sans fin et refuse la relance. Sans effet si le DCE est pret
