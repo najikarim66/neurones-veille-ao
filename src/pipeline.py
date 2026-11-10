@@ -17,11 +17,13 @@ Usage :
 """
 import argparse
 import json
+import os
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 # Imports relatifs au package src/
+from src.alerte_veille import ecrire_cause, verdict_silence, corps_silence, lire_iso
 from src.search import scraper_aos, log, PortailIndisponible
 from src.score import calculer_score, filtrer_par_seuil
 from src.purge import purger
@@ -84,9 +86,11 @@ def main():
             playwright_cfg=cfg["playwright"],
         )
     except PortailIndisponible as e:
-        # Cause nommee, pas de traceback : le run reste rouge (aucune veille faite).
+        # Cause nommee, pas de traceback : le run reste rouge (aucune veille faite). La cause est
+        # ecrite pour l'alerte mail du workflow (src/alerte_echec.py, decision DG 10/11).
         log("PORTAIL", str(e))
         log("PORTAIL", "Veille non effectuee ce creneau ; la dedup Cosmos rattrape au prochain run vert.")
+        ecrire_cause(str(e))
         sys.exit(2)
     log("PHASE", f"<<< {len(aos)} AO scrapes")
 
@@ -137,6 +141,19 @@ def main():
             except Exception as e:
                 log("COSMOS", f"  ERROR upsert ref={ao.get('ref_consultation')}: {e}")
         log("PHASE", f"<<< Cosmos : {nb_created} crees | {nb_updated} mis a jour")
+
+        # AUCUN NOUVEL AO DEPUIS 24 H OUVREES (decision DG 10/11/2026) : mail au DG. Decide sur la
+        # base (date de premiere decouverte la plus recente), pas sur ce seul passage ; jamais bloquant.
+        if nb_created == 0 and not args.no_email:
+            try:
+                verdict = verdict_silence(lire_iso(cosmos.derniere_decouverte()), datetime.now(timezone.utc))
+                log("SILENCE", verdict["motif"])
+                if verdict["alerter"]:
+                    r = envoyer_graph_simple(cfg["email"]["to_addresses"], "[Veille AO] Aucun nouvel AO depuis 24 h ouvrees",
+                                             corps_silence(verdict, os.environ.get("VEILLE_RUN_URL", "")))
+                    log("SILENCE", "alerte DG " + ("envoyee" if r.get("sent") else f"NON envoyee : {r.get('reason')}"))
+            except Exception as e:
+                log("SILENCE", f"  ERROR alerte silence non decidee : {type(e).__name__}: {e}")
 
         # AO echus non traites : supprimes, sans archive -- voir src/purge.py
         if cfg.get("purge", {}).get("actif"):
@@ -199,5 +216,17 @@ def main():
     sys.exit(0)
 
 
+def lancer():
+    """Point d'entree : toute exception non nommee est ECRITE comme cause (pour l'alerte mail du
+    workflow) avant de laisser le run rouge — un plantage ne doit plus rester muet (DG 10/11)."""
+    try:
+        main()
+    except SystemExit:
+        raise
+    except Exception as e:
+        ecrire_cause(f"{type(e).__name__}: {str(e).splitlines()[0] if str(e) else ''}")
+        raise
+
+
 if __name__ == "__main__":
-    main()
+    lancer()

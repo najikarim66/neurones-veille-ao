@@ -268,33 +268,98 @@ def _attendre_cartes(page, attendu: int, num: str, minimum: int = 0, ref_avant: 
     _repos(page)
 
 
+def choisir_taille_page(options, voulue: int):
+    """Pur. Parmi les tailles de page que le portail OFFRE (valeurs du <select>), la plus grande
+    qui ne depasse pas `voulue` ; a defaut la plus grande offerte ; None si le portail n'en offre
+    aucune. Panne du 09/11/2026 : a sa reouverture (arret TGR du 02 au 09/11), le portail n'offre
+    plus que 10, 20 et 50 ; demander 500 faisait attendre une option absente jusqu'au delai."""
+    tailles = []
+    for o in options or []:
+        v = re.sub(r"\D", "", str(o))
+        if v:
+            tailles.append(int(v))
+    if not tailles:
+        return None
+    sous = [t for t in tailles if t <= voulue]
+    return max(sous) if sous else max(tailles)
+
+
+def _tailles_offertes(page) -> list:
+    """Les valeurs du selecteur « resultats par page » tel qu'il est AFFICHE (jamais supposees)."""
+    try:
+        return page.evaluate(
+            "(s) => { const e = document.querySelector(s); return e ? [...e.options].map(o => o.value) : []; }",
+            SEL_PAGE_SIZE)
+    except PlaywrightError:
+        return []
+
+
 def _lire_toutes_les_pages(page, page_size: int, etiquette: str) -> tuple:
     """Page de resultats deja chargee -> (aos de TOUTES les pages, nombre annonce)."""
     annonce = int(re.sub(r"\D", "", page.inner_text(SEL_NOMBRE)) or 0)
     if annonce == 0:
         log(etiquette, "0 resultat annonce")
         return [], 0
-    attendu_p1 = min(annonce, page_size)
     avant = page.locator(SEL_CARTE).count()
-    if annonce > avant:
+    offertes = _tailles_offertes(page)
+    taille = choisir_taille_page(offertes, page_size)
+    if taille is None:
+        # Aucune option : on lit avec la taille que le portail applique deja (cartes affichees).
+        taille = max(avant, 1)
+        log(etiquette, f"  WARN selecteur de taille sans option : lecture par {taille} (taille affichee)")
+    elif taille != page_size:
+        log(etiquette, f"  taille demandee {page_size}, le portail offre {'/'.join(offertes)} : lecture par {taille}")
+    attendu_p1 = min(annonce, taille)
+    if annonce > avant and taille > avant:
         _repos(page)
-        page.select_option(SEL_PAGE_SIZE, value=str(page_size))
+        page.select_option(SEL_PAGE_SIZE, value=str(taille))
         _attendre_cartes(page, attendu_p1, "1", minimum=avant)
+    page_size = taille
     nb_pages = -(-annonce // page_size)
     aos, vus = [], set()
+    non_lues = []
     for num in range(1, nb_pages + 1):
-        if num > 1:
-            ref_avant = page.locator('[id$="_referencem"]').first.inner_text().strip()
-            page.fill(SEL_NUM_PAGE, str(num))
-            page.press(SEL_NUM_PAGE, "Enter")
-            _attendre_cartes(page, min(page_size, annonce - (num - 1) * page_size), str(num), ref_avant=ref_avant)
+        if num > 1 and not _ouvrir_page(page, num, min(page_size, annonce - (num - 1) * page_size), etiquette):
+            non_lues.append(num)
+            continue
         lus = parse_resultats(page.content())
         nouveaux = [a for a in lus if a["ref_consultation"] not in vus]
         vus.update(a["ref_consultation"] for a in nouveaux)
         aos.extend(nouveaux)
         log(etiquette, f"  page {num}/{nb_pages} : {len(lus)} carte(s), {len(nouveaux)} nouvelle(s)")
-    log(etiquette, f"{annonce} annonce(s) · {len(aos)} lu(s) · {annonce - len(aos)} non lu(s)")
+    log(etiquette, f"{annonce} annonce(s) · {len(aos)} lu(s) · {annonce - len(aos)} non lu(s)"
+                   + (f" · pages NON LUES : {', '.join(map(str, non_lues))}" if non_lues else ""))
     return aos, annonce
+
+
+def _ref_premiere_carte(page):
+    try:
+        return page.locator('[id$="_referencem"]').first.inner_text(timeout=5000).strip()
+    except (PWTimeout, PlaywrightError):
+        return None
+
+
+def _ouvrir_page(page, num: int, attendu: int, etiquette: str, essais: int = 2, delai_s: float = 120) -> bool:
+    """Postback PRADO vers la page `num`, rejoue une fois si le portail ne rend aucune carte (dry-run du
+    10/11/2026 : la page 12 est revenue vide apres un delai, et la lecture suivante plantait le passage
+    entier). Rend False si la page n'a pas pu etre lue : l'appelant la NOMME dans le bilan et continue."""
+    for essai in range(1, essais + 1):
+        ref_avant = _ref_premiere_carte(page)
+        try:
+            page.fill(SEL_NUM_PAGE, str(num))
+            page.press(SEL_NUM_PAGE, "Enter")
+        except (PWTimeout, PlaywrightError) as e:
+            log(etiquette, f"  WARN page {num} : saisie du numero impossible ({type(e).__name__}), essai {essai}/{essais}")
+            _repos(page)
+            continue
+        _attendre_cartes(page, attendu, str(num), ref_avant=ref_avant, delai_s=delai_s)
+        try:
+            if page.locator(SEL_CARTE).count() > 0:
+                return True
+        except PlaywrightError:
+            pass
+        log(etiquette, f"  WARN page {num} : aucune carte affichee, essai {essai}/{essais}")
+    return False
 
 
 def _recherche_formulaire(page, keyword: str, code_categorie: str):

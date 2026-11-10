@@ -9,7 +9,9 @@ on:
 jobs:
   veille:
     runs-on: [self-hosted, maroc]
-    timeout-minutes: 10
+    # 10 -> 45 min (10/11/2026) : le portail rouvert ne sert plus que 50 resultats par page (531 AO = 11 pages,
+    # relues quatre fois pour les categories) ; mesure locale du 10/11 : ~30 s par page, soit ~5 min par lecture.
+    timeout-minutes: 45
 
     steps:
       - name: Checkout
@@ -32,6 +34,13 @@ jobs:
         run: |
           & "C:\actions-runner\veille-venv\Scripts\python.exe" -m playwright install chromium
 
+      # Gates unitaires (node pur -> python pur : aucun reseau, aucune base), AVANT le passage : une regle
+      # qui se defait (taille de page, alertes, cartes, purge) ne part pas en production (doctrine #12, #14).
+      - name: Gates unitaires
+        shell: powershell
+        run: |
+          & "C:\actions-runner\veille-venv\Scripts\python.exe" -m unittest discover -s test -t .
+
       - name: Run pipeline
         shell: powershell
         env:
@@ -41,5 +50,22 @@ jobs:
           GRAPH_CLIENT_SECRET: ${{ secrets.GRAPH_CLIENT_SECRET }}
           GRAPH_FROM: no-reply@neurones.ma
           GRAPH_FROM_NAME: Veille AO Neurones
+          VEILLE_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           & "C:\actions-runner\veille-venv\Scripts\python.exe" -m src.pipeline
+
+      # ALERTE AU DG SI LE PASSAGE ECHOUE (decision DG 10/11/2026) : du 02 au 10/11, seize passages rouges
+      # (portail arrete par la TGR, puis taille de page disparue) n'ont alerte personne. Le pipeline ecrit sa
+      # cause nommee dans veille-echec.txt ; cette etape la mail avec le lien du passage. Meme app Graph.
+      - name: Alerte DG — le passage a echoue
+        if: failure()
+        shell: powershell
+        env:
+          GRAPH_TENANT_ID: ${{ secrets.GRAPH_TENANT_ID }}
+          GRAPH_CLIENT_ID: ${{ secrets.GRAPH_CLIENT_ID }}
+          GRAPH_CLIENT_SECRET: ${{ secrets.GRAPH_CLIENT_SECRET }}
+          GRAPH_FROM: no-reply@neurones.ma
+          GRAPH_FROM_NAME: Veille AO Neurones
+          VEILLE_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          & "C:\actions-runner\veille-venv\Scripts\python.exe" -m src.alerte_echec --run-url "$env:VEILLE_RUN_URL"

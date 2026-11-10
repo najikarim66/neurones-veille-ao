@@ -108,6 +108,18 @@ class CosmosVeilleClient:
                 return kw
         return None
 
+    def derniere_decouverte(self):
+        """La date de premiere decouverte la plus recente des AO de cette source (ISO, ou None si
+        aucun AO ou champ absent). Sert l'alerte « aucun nouvel AO depuis 24 h ouvrees »
+        (src/alerte_veille.py). Lecture seule."""
+        rows = list(self.container.query_items(
+            query="SELECT VALUE MAX(c.date_premiere_decouverte) FROM c "
+                  "WHERE c.source = @src AND IS_DEFINED(c.ref_consultation)",
+            parameters=[{"name": "@src", "value": self.source_id}],
+            partition_key=self.source_id,
+        ))
+        return rows[0] if rows and rows[0] else None
+
     def upsert_ao(self, ao: dict) -> dict:
         """
         Upsert un AO avec dedup intelligente.
