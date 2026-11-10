@@ -68,12 +68,12 @@ jobs:
       # le seuil ; ce runner sert d'horloge (tick chaque minute tant qu'une etude est en cours).
       # Aucune cle ici : l'analyse vit dans MP. Jamais bloquant (continue-on-error).
       - name: Relever l'etude d'AO dans MP
-      if: success()
-      continue-on-error: true
-      shell: powershell
-      timeout-minutes: 22
-      run: |
-        & "C:actions-runnereille-venvScriptspython.exe" -m src.etude_tick
+        if: success()
+        continue-on-error: true
+        shell: powershell
+        timeout-minutes: 22
+        run: |
+          & "C:actions-runnereille-venvScriptspython.exe" -m src.etude_tick
 
       # Run interrompu (delai depasse, annule, plantage) : le doc ne reste pas en « downloading »,
       # sinon MP affiche un sablier sans fin et refuse la relance. Sans effet si le DCE est pret
