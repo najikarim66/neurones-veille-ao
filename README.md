@@ -5,7 +5,7 @@ Pipeline automatique de veille sur les marchés publics marocains (marchespublic
 **Workflow** : scrape → scoring → push Cosmos DB → email HTML quotidien.
 
 **Fonctionnement** :
-- 7h00 et 15h00 (heure Casablanca), GitHub Actions execute le pipeline
+- 8h00 et 15h00 (heure Casablanca ; 07:00 et 14:00 UTC — decision DG 11/11/2026 : le portail n'est pas servi avant 8h), le runner marocain execute le pipeline, declenche par la tache planifiee Windows « Veille AO - Trigger »
 - Les nouveaux AO pertinents (score >= 35) sont stockes en Cosmos avec deduplication
 - Un email recapitulatif est envoye via Resend a `naji@neurones.ma`
 - Le DL DCE se fait **a la demande** depuis ton PC local
@@ -15,7 +15,7 @@ Pipeline automatique de veille sur les marchés publics marocains (marchespublic
 ## Architecture
 
 ```
-GITHUB ACTIONS (cron 6h+14h UTC)
+GITHUB ACTIONS (dispatch 7h+14h UTC, tache planifiee locale)
        │
        └─> python -m src.pipeline
               │
