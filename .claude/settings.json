@@ -36,9 +36,6 @@
       "Bash(az monitor app-insights query:*)",
       "Bash(az monitor log-analytics query:*)"
     ],
-    "ask": [
-      "Bash(git reset --hard:*)"
-    ],
     "deny": [
       "Bash(git push --force:*)",
       "Bash(git push -f:*)",
@@ -53,6 +50,13 @@
       "Bash(az cosmosdb sql database delete:*)",
       "Bash(az cosmosdb sql container delete:*)",
       "Bash(az * delete*)"
+    ],
+    "ask": [
+      "Bash(git reset --hard:*)"
     ]
+  },
+  "enabledPlugins": {
+    "skill-creator@claude-plugins-official": true,
+    "claude-md-management@claude-plugins-official": true
   }
 }
