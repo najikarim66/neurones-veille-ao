@@ -1,0 +1,41 @@
+name: Garde des passages Veille AO
+
+# Decision DG 12/11/2026 : alerter le DG si un passage PREVU n'a pas eu lieu (pas seulement s'il a echoue).
+# Tourne sur un runner GitHub (cloud), donc aussi quand le PC qui porte la tache planifiee et le runner
+# self-hosted est eteint. Le cron GitHub est imprecis (retards possibles) : le script verifie le creneau
+# le plus recent dont l'echeance (creneau + 90 min) est passee, quelle que soit l'heure reelle du reveil.
+# Ne lance aucun passage : le rattrapage est fait par la tache Windows au demarrage suivant du PC.
+on:
+  schedule:
+    - cron: "40 9 * * 1-5"    # verifie le creneau de 08:00 UTC
+    - cron: "40 15 * * 1-5"   # verifie le creneau de 14:00 UTC
+  workflow_dispatch: {}
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  garde:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Gate pure (aucun reseau, aucune base) avant de juger un passage : une garde fausse vaut un faux rouge.
+      - name: Gate garde
+        run: python -m unittest test.test_garde_passage
+
+      - name: Verdict et alerte DG si un passage prevu n'a pas eu lieu
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GRAPH_TENANT_ID: ${{ secrets.GRAPH_TENANT_ID }}
+          GRAPH_CLIENT_ID: ${{ secrets.GRAPH_CLIENT_ID }}
+          GRAPH_CLIENT_SECRET: ${{ secrets.GRAPH_CLIENT_SECRET }}
+          GRAPH_FROM: no-reply@neurones.ma
+          GRAPH_FROM_NAME: Veille AO Neurones
+        run: python -m src.garde_passage
