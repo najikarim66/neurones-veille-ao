@@ -35,6 +35,11 @@
   (cause écrite par le pipeline dans `veille-echec.txt`, gitignoré).
 - Silence : si un passage ne crée aucun AO et que la dernière `date_premiere_decouverte` en Cosmos date de plus de 24 h ouvrées
   (lun–ven, `src/alerte_veille.heures_ouvrees`) → mail « [Veille AO] Aucun nouvel AO depuis 24 h ouvrees ».
+- Passage prévu NON LANCÉ ou en attente du runner (décision DG 12/11) : workflow « Garde des passages Veille AO »
+  (`.github/workflows/veille-garde.yml`, cron GitHub 09:40 et 15:40 UTC sur runner GitHub, donc actif PC éteint) → `src/garde_passage.py`
+  lit les runs de `veille-ao.yml` et, si aucun passage n'a été créé depuis le créneau (+ 90 min) ou si un passage reste « queued » plus de
+  30 min, mail « [Veille AO] Passage prevu a … NON LANCE » ou « … EN ATTENTE du runner ». La garde ne relance rien : le rattrapage est
+  fait par la tâche Windows (StartWhenAvailable + WakeToRun) au démarrage ou au réveil suivant du PC. Essai : `gh workflow run veille-garde.yml`.
 - Ces mails automatiques vers le DG sont les seuls permis ; aucun mail automatique vers l'extérieur (voir règle d'autonomie §2).
 
 ## Panne du 09/11/2026 (diagnostic du 10/11, lecture seule maillon par maillon)
